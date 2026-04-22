@@ -1,153 +1,111 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { useState } from "react";
+import { Bot, SendHorizonal } from "lucide-react";
 import toast from "react-hot-toast";
-import { Sparkles, Wand2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 
-interface ChatMessage {
-  id: string;
+type ChatMessage = {
   role: "user" | "assistant";
   content: string;
-}
+};
 
-interface SuggestedTool {
-  name: string;
-  description: string;
-  code: string;
-}
-
-interface AgentChatProps {
-  onSuggestion: (suggestedTool: SuggestedTool) => void;
-}
-
-const seedMessages: ChatMessage[] = [
+const initialMessages: ChatMessage[] = [
   {
-    id: "seed-1",
     role: "assistant",
     content:
-      "Describe the workflow that is failing. I will draft a tool function you can test in the sandbox immediately."
-  }
+      "I can create new tools from plain-language requests and run saved tools. Try: build a tool that extracts invoice totals.",
+  },
 ];
 
-export const AgentChat = ({ onSuggestion }: AgentChatProps) => {
-  const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
-  const [prompt, setPrompt] = useState("");
+export function AgentChat() {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
 
-  const canSend = useMemo(() => prompt.trim().length > 0 && !sending, [prompt, sending]);
-
-  const handleSubmit = async (event: FormEvent) => {
+  async function sendMessage(event: React.FormEvent) {
     event.preventDefault();
-
-    if (!canSend) {
+    const trimmed = input.trim();
+    if (!trimmed || sending) {
       return;
     }
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: prompt.trim()
-    };
-
-    const nextMessages = [...messages, userMessage];
+    const nextMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
     setMessages(nextMessages);
-    setPrompt("");
+    setInput("");
     setSending(true);
 
     try {
       const response = await fetch("/api/agents", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "content-type": "application/json",
         },
         body: JSON.stringify({
-          message: userMessage.content,
-          history: nextMessages.slice(-8)
-        })
+          messages: nextMessages,
+        }),
       });
 
-      const payload = (await response.json()) as {
-        reply?: string;
-        error?: string;
-        suggestedTool?: SuggestedTool;
-      };
+      const json = (await response.json()) as { reply?: string; error?: string };
 
-      if (!response.ok || !payload.reply) {
-        throw new Error(payload.error ?? "Agent could not respond.");
+      if (!response.ok || !json.reply) {
+        throw new Error(json.error ?? "Agent request failed.");
       }
 
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: payload.reply
-      };
-
-      setMessages((previous) => [...previous, assistantMessage]);
-
-      if (payload.suggestedTool) {
-        onSuggestion(payload.suggestedTool);
-        toast.success("Draft tool loaded into builder.");
-      }
+      setMessages((current) => [...current, { role: "assistant", content: json.reply ?? "" }]);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Agent could not respond.";
+      const message = error instanceof Error ? error.message : "Agent request failed.";
       toast.error(message);
-      setMessages((previous) => [
-        ...previous,
+      setMessages((current) => [
+        ...current,
         {
-          id: `assistant-error-${Date.now()}`,
           role: "assistant",
-          content: "I could not reach the model. Try a narrower request with concrete input/output examples."
-        }
+          content: `Error: ${message}`,
+        },
       ]);
     } finally {
       setSending(false);
     }
-  };
+  }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Agent Copilot</CardTitle>
-            <CardDescription>
-              Ask for a custom tool draft based on your workflow constraints.
-            </CardDescription>
-          </div>
-          <Sparkles className="h-5 w-5 text-[#58a6ff]" />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="max-h-[260px] space-y-3 overflow-y-auto rounded-lg border border-[#30363d] bg-[#0d1117] p-3">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`rounded-md border px-3 py-2 text-sm ${
-                message.role === "assistant"
-                  ? "border-[#1f6feb]/30 bg-[#1f6feb]/10 text-[#dbe9ff]"
-                  : "border-[#30363d] bg-[#161b22] text-[#c9d1d9]"
-              }`}
-            >
-              {message.content}
-            </div>
-          ))}
-        </div>
+    <section className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-4">
+      <div className="mb-3 flex items-center gap-2 text-sm text-zinc-300">
+        <Bot size={16} />
+        Agent Conversation
+      </div>
 
-        <form className="space-y-2" onSubmit={handleSubmit}>
-          <Input
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Example: Create a tool that cleans CRM records and returns invalid entries."
-          />
-          <Button disabled={!canSend} className="w-full" type="submit">
-            <Wand2 className="h-4 w-4" />
-            {sending ? "Generating Tool Draft..." : "Generate Draft Tool"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+      <div className="mb-3 max-h-80 space-y-2 overflow-auto rounded-md border border-zinc-800 bg-zinc-900 p-3">
+        {messages.map((message, index) => (
+          <div
+            key={`${message.role}-${index}`}
+            className={`rounded-md px-3 py-2 text-sm ${
+              message.role === "assistant"
+                ? "bg-zinc-800 text-zinc-100"
+                : "bg-blue-500/15 text-blue-200"
+            }`}
+          >
+            <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-400">{message.role}</p>
+            <p className="whitespace-pre-wrap">{message.content}</p>
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={sendMessage} className="flex gap-2">
+        <input
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder="Build a tool that normalizes CSV rows..."
+          className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-blue-500"
+        />
+        <button
+          type="submit"
+          disabled={sending}
+          className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-900"
+        >
+          <SendHorizonal size={14} />
+          {sending ? "Sending..." : "Send"}
+        </button>
+      </form>
+    </section>
   );
-};
+}

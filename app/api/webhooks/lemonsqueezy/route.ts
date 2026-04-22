@@ -1,43 +1,52 @@
 import { NextResponse } from "next/server";
-import {
-  parsePurchaseFromWebhook,
-  persistPurchase,
-  verifyWebhookSignature
-} from "@/lib/lemonsqueezy";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import { recordPurchase, verifyStripeSignature } from "@/lib/lemonsqueezy";
 
 export async function POST(request: Request) {
-  const rawBody = await request.text();
-  const signature = request.headers.get("x-signature");
-
-  const secretConfigured = Boolean(process.env.LEMON_SQUEEZY_WEBHOOK_SECRET);
-
-  if (secretConfigured && !verifyWebhookSignature(rawBody, signature)) {
-    return NextResponse.json(
-      {
-        error: "Invalid webhook signature."
-      },
-      { status: 401 }
-    );
+  const signature = request.headers.get("stripe-signature");
+  if (!signature) {
+    return NextResponse.json({ error: "Missing Stripe signature header." }, { status: 400 });
   }
+
+  const rawBody = await request.text();
+  const isValid = verifyStripeSignature(rawBody, signature);
+
+  if (!isValid) {
+    return NextResponse.json({ error: "Invalid webhook signature." }, { status: 400 });
+  }
+
+  let event: Record<string, unknown>;
 
   try {
-    const payload = JSON.parse(rawBody) as unknown;
-    const purchase = parsePurchaseFromWebhook(payload as never);
-
-    if (purchase) {
-      await persistPurchase(purchase);
-    }
-
-    return NextResponse.json({ received: true });
+    event = JSON.parse(rawBody) as Record<string, unknown>;
   } catch {
-    return NextResponse.json(
-      {
-        error: "Malformed webhook body."
-      },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
+
+  if (event.type !== "checkout.session.completed") {
+    return NextResponse.json({ received: true });
+  }
+
+  const eventId = String(event.id ?? "");
+  const dataObject =
+    typeof event.data === "object" && event.data !== null
+      ? ((event.data as { object?: unknown }).object as Record<string, unknown>)
+      : undefined;
+
+  const customerDetails =
+    dataObject && typeof dataObject.customer_details === "object" && dataObject.customer_details !== null
+      ? (dataObject.customer_details as Record<string, unknown>)
+      : undefined;
+
+  const emailValue =
+    (typeof customerDetails?.email === "string" && customerDetails.email) ||
+    (typeof dataObject?.customer_email === "string" && dataObject.customer_email) ||
+    "";
+
+  if (!eventId || !emailValue) {
+    return NextResponse.json({ error: "Missing purchase identity fields." }, { status: 400 });
+  }
+
+  await recordPurchase(emailValue, eventId);
+
+  return NextResponse.json({ received: true });
 }

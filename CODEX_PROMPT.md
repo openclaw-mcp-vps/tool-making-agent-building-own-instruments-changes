@@ -11,7 +11,7 @@ NICHE: ai-agents
 PRICE: $$15/mo
 
 ARCHITECTURE SPEC:
-A Next.js platform with a real-time code execution sandbox where AI agents can dynamically create, test, and deploy custom tools during conversations. Features a tool marketplace, version control for agent-created instruments, and usage analytics dashboard.
+A Next.js platform with a real-time code execution environment where AI agents can dynamically create, test, and deploy custom tools during conversations. Features a sandboxed runtime, tool registry, and conversation interface that allows agents to build functions on-demand and persist them for future use.
 
 PLANNED FILES:
 - app/page.tsx
@@ -21,17 +21,17 @@ PLANNED FILES:
 - app/api/tools/execute/route.ts
 - app/api/sandbox/route.ts
 - app/api/webhooks/lemonsqueezy/route.ts
+- components/AgentChat.tsx
 - components/ToolBuilder.tsx
 - components/CodeEditor.tsx
-- components/AgentChat.tsx
-- components/ToolMarketplace.tsx
+- components/ToolRegistry.tsx
 - lib/sandbox.ts
-- lib/tool-registry.ts
+- lib/tool-executor.ts
+- lib/agent-engine.ts
 - lib/lemonsqueezy.ts
-- types/agent.ts
-- types/tool.ts
+- lib/auth.ts
 
-DEPENDENCIES: next, react, tailwindcss, @monaco-editor/react, socket.io, socket.io-client, prisma, @prisma/client, openai, vm2, @lemonsqueezy/lemonsqueezy.js, stripe, zustand, react-hot-toast, lucide-react, framer-motion
+DEPENDENCIES: next, tailwindcss, @clerk/nextjs, @lemonsqueezy/lemonsqueezy.js, prisma, @prisma/client, vm2, monaco-editor, @monaco-editor/react, socket.io, socket.io-client, openai, zod, react-hot-toast, lucide-react, @radix-ui/react-dialog, @radix-ui/react-tabs
 
 REQUIREMENTS:
 - Next.js 15 with App Router (app/ directory)
@@ -39,7 +39,7 @@ REQUIREMENTS:
 - Tailwind CSS v4
 - shadcn/ui components (npx shadcn@latest init, then add needed components)
 - Dark theme ONLY — background #0d1117, no light mode
-- Lemon Squeezy checkout overlay for payments
+- Stripe Payment Link for payments (hosted checkout — use the URL directly as the Buy button href)
 - Landing page that converts: hero, problem, solution, pricing, FAQ
 - The actual tool/feature behind a paywall (cookie-based access after purchase)
 - Mobile responsive
@@ -59,9 +59,13 @@ REQUIREMENTS:
   to package.json dependencies and re-run npm install + npm run build until it passes.
 
 ENVIRONMENT VARIABLES (create .env.example):
-- NEXT_PUBLIC_LEMON_SQUEEZY_STORE_ID
-- NEXT_PUBLIC_LEMON_SQUEEZY_PRODUCT_ID
-- LEMON_SQUEEZY_WEBHOOK_SECRET
+- NEXT_PUBLIC_STRIPE_PAYMENT_LINK  (full URL, e.g. https://buy.stripe.com/test_XXX)
+- NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY  (pk_test_... or pk_live_...)
+- STRIPE_WEBHOOK_SECRET  (set when webhook is wired)
+
+BUY BUTTON RULE: the Buy button's href MUST be `process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK`
+used as-is — do NOT construct URLs from a product ID, do NOT prepend any base URL,
+do NOT wrap it in an embed iframe. The link opens Stripe's hosted checkout directly.
 
 After creating all files:
 1. Run: npm install

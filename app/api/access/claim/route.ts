@@ -1,73 +1,33 @@
 import { NextResponse } from "next/server";
-import { findPurchase } from "@/lib/lemonsqueezy";
+import { z } from "zod";
+import { grantAccessCookie } from "@/lib/auth";
+import { hasPurchase } from "@/lib/lemonsqueezy";
 
-const ACCESS_COOKIE = "agent_tool_access";
-
-export const runtime = "nodejs";
+const claimSchema = z.object({
+  email: z.string().email(),
+});
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      orderId?: string;
-      email?: string;
-    };
+    const body = await request.json();
+    const { email } = claimSchema.parse(body);
+    const purchased = await hasPurchase(email);
 
-    const orderId = body.orderId?.trim();
-    const email = body.email?.trim();
-
-    if (!orderId || !email) {
+    if (!purchased) {
       return NextResponse.json(
         {
-          error: "orderId and email are required."
+          error:
+            "No completed checkout was found for this email yet. If you just paid, wait 10-20 seconds for webhook delivery and try again.",
         },
-        { status: 400 }
+        { status: 404 },
       );
     }
 
-    const isLocalBypass =
-      process.env.NODE_ENV !== "production" && orderId === "LOCAL_DEV" && email.includes("@");
-
-    if (!isLocalBypass) {
-      const purchase = await findPurchase(orderId, email);
-
-      if (!purchase) {
-        return NextResponse.json(
-          {
-            error: "Purchase not found yet. Wait a few seconds and retry after checkout completes."
-          },
-          { status: 404 }
-        );
-      }
-
-      if (purchase.status.toLowerCase().includes("refund")) {
-        return NextResponse.json(
-          {
-            error: "This order is not eligible for access."
-          },
-          { status: 403 }
-        );
-      }
-    }
-
-    const response = NextResponse.json({ access: "granted" });
-
-    response.cookies.set({
-      name: ACCESS_COOKIE,
-      value: "granted",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30
-    });
-
+    const response = NextResponse.json({ success: true });
+    grantAccessCookie(response);
     return response;
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid request payload."
-      },
-      { status: 400 }
-    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to verify purchase.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

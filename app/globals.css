@@ -7,23 +7,10 @@
 html,
 body {
   margin: 0;
+  padding: 0;
   min-height: 100%;
   background: #0d1117;
-  color: #c9d1d9;
-}
-
-body {
-  font-family: var(--font-space-grotesk), "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
-  background-image:
-    radial-gradient(circle at 15% 20%, rgba(31, 111, 235, 0.2), transparent 30%),
-    radial-gradient(circle at 80% 10%, rgba(46, 160, 67, 0.15), transparent 28%),
-    linear-gradient(180deg, #0d1117 0%, #0d1117 45%, #0f141c 100%);
-}
-
-code,
-pre,
-.font-mono {
-  font-family: var(--font-ibm-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #e6edf3;
 }
 
 * {
@@ -32,31 +19,19 @@ pre,
 
 a {
   color: inherit;
-  text-decoration: none;
 }
 
-@keyframes accordion-down {
-  from {
-    height: 0;
-  }
-  to {
-    height: var(--radix-accordion-content-height);
-  }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(56, 139, 253, 0.16), transparent 35%),
+    radial-gradient(circle at 85% 25%, rgba(35, 134, 54, 0.14), transparent 35%);
+  background-attachment: fixed;
 }
 
-@keyframes accordion-up {
-  from {
-    height: var(--radix-accordion-content-height);
-  }
-  to {
-    height: 0;
-  }
-}
-
-.animate-accordion-down {
-  animation: accordion-down 0.2s ease-out;
-}
-
-.animate-accordion-up {
-  animation: accordion-up 0.2s ease-out;
+.grid-shell {
+  background-image:
+    linear-gradient(rgba(110, 118, 129, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(110, 118, 129, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
 }

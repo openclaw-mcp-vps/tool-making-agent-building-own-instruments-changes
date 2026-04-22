@@ -1,39 +1,34 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { executeTool, getAnalytics, listExecutions } from "@/lib/tool-registry";
+import { z } from "zod";
+import { ACCESS_COOKIE, hasAccessCookie } from "@/lib/auth";
+import { executeToolByName } from "@/lib/tool-executor";
 
-export const runtime = "nodejs";
-
-export async function GET() {
-  const [analytics, executions] = await Promise.all([getAnalytics(), listExecutions()]);
-  return NextResponse.json({ analytics, executions: executions.slice(0, 20) });
-}
+const executeSchema = z.object({
+  name: z.string().min(2).max(50),
+  input: z.unknown(),
+});
 
 export async function POST(request: Request) {
+  const cookieStore = await cookies();
+  if (!hasAccessCookie(cookieStore.get(ACCESS_COOKIE)?.value)) {
+    return NextResponse.json({ error: "Paid access is required." }, { status: 402 });
+  }
+
   try {
-    const body = (await request.json()) as {
-      toolId?: string;
-      input?: unknown;
-    };
+    const body = await request.json();
+    const parsed = executeSchema.parse(body);
+    const result = await executeToolByName(parsed.name, parsed.input);
 
-    if (!body.toolId) {
-      return NextResponse.json(
-        {
-          error: "toolId is required"
-        },
-        { status: 400 }
-      );
-    }
-
-    const execution = await executeTool(body.toolId, body.input ?? {});
-
-    return NextResponse.json({ execution });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Tool execution failed.";
-    return NextResponse.json(
-      {
-        error: message
+    return NextResponse.json({
+      tool: {
+        name: result.tool.name,
+        version: result.tool.version,
       },
-      { status: 500 }
-    );
+      run: result.run,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to execute tool.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

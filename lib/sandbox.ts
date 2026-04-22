@@ -1,127 +1,64 @@
-import { NodeVM } from "vm2";
+import vm from "node:vm";
 
-interface SandboxResult {
-  output: unknown;
+export type SandboxExecutionResult = {
+  result: unknown;
   logs: string[];
-  durationMs: number;
-}
-
-const MAX_EXECUTION_MS = 4_000;
-
-const normalizeToolSource = (rawCode: string): string => {
-  const code = rawCode.trim();
-
-  if (!code) {
-    throw new Error("Tool code cannot be empty.");
-  }
-
-  if (code.includes("module.exports")) {
-    return code;
-  }
-
-  if (
-    code.startsWith("(") ||
-    code.startsWith("async (") ||
-    code.startsWith("function") ||
-    code.startsWith("async function") ||
-    code.startsWith("input =>") ||
-    code.startsWith("(input)")
-  ) {
-    return `module.exports = ${code};`;
-  }
-
-  return `
-module.exports = async function(input) {
-${code}
-};
-`;
+  elapsedMs: number;
 };
 
-const toError = (error: unknown): Error => {
-  if (error instanceof Error) {
-    return error;
-  }
+export async function executeInSandbox(
+  codeBody: string,
+  input: unknown,
+  timeoutMs = 2000,
+): Promise<SandboxExecutionResult> {
+  const logs: string[] = [];
+  const startedAt = Date.now();
 
-  return new Error(typeof error === "string" ? error : "Unknown sandbox error");
-};
+  const sandboxConsole = {
+    log: (...args: unknown[]) => {
+      logs.push(args.map((arg) => String(arg)).join(" "));
+    },
+  };
 
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
-  let timeoutId: NodeJS.Timeout | undefined;
+  const sandbox = {
+    console: sandboxConsole,
+    Math,
+    Date,
+    JSON,
+    Intl,
+    input,
+    context: { nowIso: new Date().toISOString() },
+  };
 
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Execution exceeded ${timeoutMs}ms timeout.`));
-    }, timeoutMs);
+  const vmContext = vm.createContext(sandbox);
+
+  const source = `
+    (async () => {
+      "use strict";
+      ${codeBody}
+    })()
+  `;
+
+  const script = new vm.Script(source, {
+    filename: "tool-runtime.vm.js",
   });
 
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
-};
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => {
+      clearTimeout(timer);
+      reject(new Error(`Sandbox execution exceeded ${timeoutMs}ms timeout`));
+    }, timeoutMs + 50);
+  });
 
-export const executeInSandbox = async (
-  rawCode: string,
-  input: unknown,
-  timeoutMs = MAX_EXECUTION_MS
-): Promise<SandboxResult> => {
-  const logs: string[] = [];
-  const startedAt = performance.now();
+  const execution = script.runInContext(vmContext, {
+    timeout: timeoutMs,
+  }) as Promise<unknown>;
 
-  try {
-    const vm = new NodeVM({
-      console: "redirect",
-      eval: false,
-      wasm: false,
-      require: {
-        external: false,
-        builtin: []
-      },
-      sandbox: {
-        Date,
-        Math,
-        JSON
-      }
-    });
+  const result = await Promise.race([execution, timeoutPromise]);
 
-    vm.on("console.log", (...args: unknown[]) => {
-      logs.push(args.map((arg) => formatForLog(arg)).join(" "));
-    });
-
-    vm.on("console.error", (...args: unknown[]) => {
-      logs.push(`[error] ${args.map((arg) => formatForLog(arg)).join(" ")}`);
-    });
-
-    const source = normalizeToolSource(rawCode);
-    const exported = vm.run(source, "tool.cjs");
-
-    if (typeof exported !== "function") {
-      throw new Error("Tool must export a function.");
-    }
-
-    const output = await withTimeout(Promise.resolve(exported(input)), timeoutMs);
-
-    return {
-      output,
-      logs,
-      durationMs: Math.round(performance.now() - startedAt)
-    };
-  } catch (error) {
-    throw toError(error);
-  }
-};
-
-const formatForLog = (value: unknown): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-};
+  return {
+    result,
+    logs,
+    elapsedMs: Date.now() - startedAt,
+  };
+}

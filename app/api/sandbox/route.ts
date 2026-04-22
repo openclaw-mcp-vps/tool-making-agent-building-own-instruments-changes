@@ -1,69 +1,27 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { executeInSandbox } from "@/lib/sandbox";
+import { z } from "zod";
+import { ACCESS_COOKIE, hasAccessCookie } from "@/lib/auth";
+import { executeAdhocTool } from "@/lib/tool-executor";
 
-export const runtime = "nodejs";
-
-const sleep = async (ms: number) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+const sandboxSchema = z.object({
+  code: z.string().min(20).max(12000),
+  input: z.unknown(),
+});
 
 export async function POST(request: Request) {
+  const cookieStore = await cookies();
+  if (!hasAccessCookie(cookieStore.get(ACCESS_COOKIE)?.value)) {
+    return NextResponse.json({ error: "Paid access is required." }, { status: 402 });
+  }
+
   try {
-    const body = (await request.json()) as {
-      code?: string;
-      input?: unknown;
-    };
-
-    if (!body.code?.trim()) {
-      return NextResponse.json(
-        {
-          error: "code is required"
-        },
-        { status: 400 }
-      );
-    }
-
-    const encoder = new TextEncoder();
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        const push = (payload: Record<string, unknown>) => {
-          controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
-        };
-
-        try {
-          push({ type: "stage", message: "Validating tool source..." });
-          await sleep(120);
-
-          push({ type: "stage", message: "Booting isolated runtime..." });
-          await sleep(140);
-
-          push({ type: "stage", message: "Executing against input payload..." });
-          const { output, logs, durationMs } = await executeInSandbox(body.code ?? "", body.input ?? {});
-
-          push({ type: "result", output, logs, durationMs });
-          controller.close();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Sandbox execution failed.";
-          push({ type: "error", error: message });
-          controller.close();
-        }
-      }
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "application/x-ndjson; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform"
-      }
-    });
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid request payload."
-      },
-      { status: 400 }
-    );
+    const body = await request.json();
+    const parsed = sandboxSchema.parse(body);
+    const run = await executeAdhocTool(parsed.code, parsed.input);
+    return NextResponse.json({ run });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Sandbox execution failed.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

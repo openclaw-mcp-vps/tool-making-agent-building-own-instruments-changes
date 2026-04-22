@@ -1,104 +1,78 @@
-import crypto from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import crypto from "crypto";
+import { readJsonFile, writeJsonFile } from "@/lib/storage";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const PURCHASES_FILE = path.join(DATA_DIR, "purchases.json");
+const PURCHASE_FILE = "purchases.json";
 
-export interface PurchaseRecord {
-  orderId: string;
+type PurchaseRecord = {
   email: string;
-  customerName: string;
-  status: string;
-  productName?: string;
+  source: "stripe";
+  eventId: string;
   createdAt: string;
-}
-
-interface LemonSqueezyPayload {
-  meta?: {
-    event_name?: string;
-  };
-  data?: {
-    id?: string;
-    attributes?: {
-      status?: string;
-      user_email?: string;
-      user_name?: string;
-      first_order_item?: {
-        product_name?: string;
-      };
-    };
-  };
-}
-
-export const getCheckoutOverlayUrl = (): string => {
-  const productId = process.env.NEXT_PUBLIC_LEMON_SQUEEZY_PRODUCT_ID;
-
-  if (!productId) {
-    return "";
-  }
-
-  return `https://checkout.lemonsqueezy.com/buy/${productId}?embed=1&logo=0&desc=0&discount=0`;
 };
 
-export const verifyWebhookSignature = (rawBody: string, signatureHeader: string | null): boolean => {
-  const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
+export function getStripePaymentLink() {
+  return process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ?? "";
+}
 
-  if (!secret || !signatureHeader) {
+function safeCompareHex(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a, "hex");
+  const bBuffer = Buffer.from(b, "hex");
+
+  if (aBuffer.length !== bBuffer.length) {
     return false;
   }
 
-  const digest = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(signatureHeader));
-};
+  return crypto.timingSafeEqual(aBuffer, bBuffer);
+}
 
-export const parsePurchaseFromWebhook = (payload: LemonSqueezyPayload): PurchaseRecord | null => {
-  const eventName = payload.meta?.event_name;
-
-  if (!eventName || !eventName.includes("order")) {
-    return null;
+export function verifyStripeSignature(rawBody: string, signatureHeader: string): boolean {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) {
+    return false;
   }
 
-  const orderId = payload.data?.id;
-  const attributes = payload.data?.attributes;
+  const parts = signatureHeader.split(",").reduce<Record<string, string>>((acc, piece) => {
+    const [key, value] = piece.split("=");
+    if (key && value) {
+      acc[key.trim()] = value.trim();
+    }
+    return acc;
+  }, {});
 
-  if (!orderId || !attributes?.user_email) {
-    return null;
+  const timestamp = parts.t;
+  const v1 = parts.v1;
+
+  if (!timestamp || !v1) {
+    return false;
   }
 
-  return {
-    orderId,
-    email: attributes.user_email.toLowerCase(),
-    customerName: attributes.user_name ?? "",
-    status: attributes.status ?? "paid",
-    productName: attributes.first_order_item?.product_name,
-    createdAt: new Date().toISOString()
-  };
-};
+  const payloadToSign = `${timestamp}.${rawBody}`;
+  const expected = crypto.createHmac("sha256", secret).update(payloadToSign).digest("hex");
 
-export const persistPurchase = async (purchase: PurchaseRecord): Promise<void> => {
-  await mkdir(DATA_DIR, { recursive: true });
-  const all = await readPurchases();
-  const deduped = all.filter((entry) => entry.orderId !== purchase.orderId);
-  deduped.push(purchase);
-  await writeFile(PURCHASES_FILE, JSON.stringify(deduped, null, 2), "utf-8");
-};
+  return safeCompareHex(expected, v1);
+}
 
-export const readPurchases = async (): Promise<PurchaseRecord[]> => {
-  try {
-    const raw = await readFile(PURCHASES_FILE, "utf-8");
-    return JSON.parse(raw) as PurchaseRecord[];
-  } catch {
-    return [];
+export async function recordPurchase(email: string, eventId: string): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const existing = await readJsonFile<PurchaseRecord[]>(PURCHASE_FILE, []);
+
+  const exists = existing.some((record) => record.eventId === eventId || record.email === normalizedEmail);
+  if (exists) {
+    return;
   }
-};
 
-export const findPurchase = async (orderId: string, email: string): Promise<PurchaseRecord | null> => {
-  const all = await readPurchases();
-  const normalizedEmail = email.toLowerCase().trim();
-  const found = all.find(
-    (entry) => entry.orderId === orderId.trim() && entry.email === normalizedEmail
-  );
+  existing.push({
+    email: normalizedEmail,
+    source: "stripe",
+    eventId,
+    createdAt: new Date().toISOString(),
+  });
 
-  return found ?? null;
-};
+  await writeJsonFile(PURCHASE_FILE, existing);
+}
+
+export async function hasPurchase(email: string): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const existing = await readJsonFile<PurchaseRecord[]>(PURCHASE_FILE, []);
+  return existing.some((record) => record.email === normalizedEmail);
+}

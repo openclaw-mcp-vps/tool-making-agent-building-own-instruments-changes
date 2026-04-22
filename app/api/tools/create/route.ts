@@ -1,79 +1,37 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import {
-  createTool,
-  listMarketplaceTools,
-  listTools,
-  updateToolCode
-} from "@/lib/tool-registry";
+import { z } from "zod";
+import { ACCESS_COOKIE, hasAccessCookie } from "@/lib/auth";
+import { createTool, createToolSchema, listTools } from "@/lib/tool-executor";
 
-export const runtime = "nodejs";
+const createRequestSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  code: z.string(),
+  inputSchema: z.record(z.unknown()).optional(),
+});
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const visibility = searchParams.get("visibility");
-
-  if (visibility === "marketplace") {
-    const tools = await listMarketplaceTools();
-    return NextResponse.json({ tools });
-  }
-
+export async function GET() {
   const tools = await listTools();
-  return NextResponse.json({ tools });
+  return NextResponse.json({
+    tools,
+  });
 }
 
 export async function POST(request: Request) {
+  const cookieStore = await cookies();
+  if (!hasAccessCookie(cookieStore.get(ACCESS_COOKIE)?.value)) {
+    return NextResponse.json({ error: "Paid access is required." }, { status: 402 });
+  }
+
   try {
-    const body = (await request.json()) as {
-      toolId?: string;
-      name?: string;
-      description?: string;
-      code?: string;
-      notes?: string;
-      authorAgentId?: string;
-      visibility?: "private" | "marketplace";
-      tags?: string[];
-    };
-
-    if (!body.code?.trim()) {
-      return NextResponse.json(
-        {
-          error: "Tool code is required."
-        },
-        { status: 400 }
-      );
-    }
-
-    if (body.toolId) {
-      const tool = await updateToolCode(body.toolId, body.code, body.notes ?? "Updated version");
-      return NextResponse.json({ tool });
-    }
-
-    if (!body.name?.trim() || !body.description?.trim()) {
-      return NextResponse.json(
-        {
-          error: "name and description are required for new tools."
-        },
-        { status: 400 }
-      );
-    }
-
-    const tool = await createTool({
-      name: body.name,
-      description: body.description,
-      code: body.code,
-      authorAgentId: body.authorAgentId ?? "agent-builder-1",
-      visibility: body.visibility ?? "private",
-      tags: body.tags
-    });
-
+    const body = await request.json();
+    const parsed = createRequestSchema.parse(body);
+    const validated = createToolSchema.parse(parsed);
+    const tool = await createTool(validated);
     return NextResponse.json({ tool }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create tool.";
-    return NextResponse.json(
-      {
-        error: message
-      },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Failed to create tool.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
